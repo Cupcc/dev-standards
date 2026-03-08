@@ -1,0 +1,173 @@
+---
+description: Company CI/CD baseline for Gitea Actions, the self-hosted Synology runner, and NAS deployment
+globs: .gitea/workflows/**/*.{yml,yaml}
+alwaysApply: false
+---
+
+# Gitea CICD guideline
+
+## Purpose
+
+This file records the project environment, CI/runtime assumptions, and operation cautions for future AI sessions.
+Use it to avoid repeating the same environment explanation and to reduce repeated mistakes when troubleshooting Gitea Actions, the self-hosted runner, and deployment.
+
+## Local Workspace
+
+- Local OS used in recent sessions: Windows
+- Main CICD workflow: `.gitea/workflows`
+
+## Remote Environment
+
+- SSH alias for admin access: `dev-128`
+- Remote machine type: Synology DSM host
+- Gitea service URL used by the runner: `http://192.168.6.128:3000`
+- Runner container name: `gitea-runner-runner-1`
+- Runner is managed by Docker Compose, not a one-off container
+- Runner compose directory: `/volume1/docker/gitea-data/gitea-runner`
+- Runner compose file: `/volume1/docker/gitea-data/gitea-runner/compose.yaml`
+- Runner config file: `/volume1/docker/gitea-data/gitea-runner/config.yaml`
+- Runner persistent data directory: `/volume1/docker/gitea-data/gitea-runner/data`
+
+## Runner Persistence Facts
+
+- The runner is persistent.
+- Persistence comes from the bind mount `./data:/data`.
+- Runner registration is stored in `/volume1/docker/gitea-data/gitea-runner/data/.runner`.
+- Actions cache data is stored under `/volume1/docker/gitea-data/gitea-runner/data/cache`.
+- Recreating the runner container is safe only if the compose file and `/data` mount are preserved.
+
+## Runner Networking And Proxy
+
+- Proxy used by the runner and job containers:
+  - `HTTP_PROXY=http://192.168.6.20:7897`
+  - `HTTPS_PROXY=http://192.168.6.20:7897`
+- Important `NO_PROXY` entries:
+  - `localhost`
+  - `127.0.0.1`
+  - `::1`
+  - `192.168.6.0/24`
+  - `192.168.6.128`
+  - `host.docker.internal`
+
+## Actions Cache Baseline
+
+The previous cache timeout issue was caused by runner-side cache service exposure, not by the workflow itself.
+
+The working cache baseline is:
+
+- `cache.enabled: true`
+- `cache.dir: /data/cache`
+- `cache.host: 192.168.6.128`
+- `cache.port: 8088`
+- Docker Compose publishes `8088:8088`
+
+If cache warnings return, check these first before editing the workflow.
+
+## Workflow Baseline
+
+The current workflow intentionally:
+
+- uses `ubuntu-20.04`, which maps to `docker://node:20-bullseye` in runner labels
+- caches `.corepack` and `.pnpm-store`
+- activates `pnpm@10.29.2`
+- applies conservative pnpm network settings before install:
+  - `network-concurrency=4`
+  - `fetch-timeout=120000`
+  - `fetch-retries=5`
+  - `fetch-retry-mintimeout=10000`
+  - `fetch-retry-maxtimeout=60000`
+
+These pnpm settings were added because high-concurrency package downloads through the proxy were unstable.
+
+## Gitea Actions Variable Names
+
+- Secret:
+  - `secrets.NAS_SSH_KEY`
+- Variables:
+  - `vars.NAS_IP`
+  - `vars.NAS_SSH_PORT`
+  - `vars.NAS_SSH_USER`
+  - `vars.NAS_BASE_DIR`
+
+Expected usage split:
+
+- keep the SSH private key only in `secrets.NAS_SSH_KEY`
+- keep connection and path metadata in `vars.NAS_SSH_PORT`, `vars.NAS_IP`, `vars.NAS_SSH_USER`, and `vars.NAS_BASE_DIR`
+- before changing workflow expressions, confirm the names match the existing repository configuration exactly
+
+## Verified Conclusions
+
+- The runner cache service is reachable on `http://192.168.6.128:8088`.
+- The artifact cache API path `/_apis/artifactcache/cache` returned normal responses after the runner fix.
+- Repeated workflow runs eventually restored cache successfully using the `Linux-pnpm-10-*` key.
+- Single npm/tarball requests were generally fine.
+- High-concurrency tarball downloads were the unstable part of the network path.
+- Lower pnpm concurrency materially improved stability in containerized validation.
+
+## AI Operation Cautions
+
+### Do Not Undo These Runner Fixes
+
+- Do not remove port mapping `8088:8088` from the runner compose file.
+- Do not set `cache.host` back to empty.
+- Do not set `cache.port` back to `0`.
+- Do not remove the runner `/data` bind mount.
+
+### Do Not Expose Secrets
+
+- Never write runner registration tokens, SSH private keys, or Gitea access tokens into repo files.
+- Keep the deployment SSH private key in `secrets.NAS_SSH_KEY`; do not move it into `vars` or hardcode it in YAML.
+- If a temporary Gitea admin token is generated for validation, delete it immediately after use.
+
+### Be Careful With Remote Shell Quoting
+
+- Nested `ssh` + `bash -lc` + heredoc commands are easy to break on Windows.
+- If a remote script is non-trivial, prefer passing a carefully quoted script or using a safer staging approach.
+- If output unexpectedly shows local Windows Node/Corepack paths, the command probably executed locally by mistake.
+
+### Be Careful With Bind-Mounted File Ownership
+
+- Job-like containers may create files owned by `root` in bind-mounted remote directories.
+- A plain remote `rm -rf` by user `dev` may fail with `Permission denied`.
+- If cleanup is blocked, use a root-capable container or repair ownership before retrying.
+
+### Prefer Runner-Side Diagnosis First
+
+- For Gitea Actions cache failures, inspect runner compose/config before changing the workflow.
+- Only change workflow cache logic if runner cache exposure and connectivity are already confirmed healthy.
+
+### Prefer Low-Risk CI Changes
+
+- For npm/pnpm network instability, prefer tuning concurrency and retry settings first.
+- Avoid switching package registries unless there is evidence the official registry is the main problem.
+- When adjusting deployment steps, prefer reusing the existing `NAS_*` variable names instead of introducing new aliases.
+
+## Recommended Remote Checks
+
+When troubleshooting future CI issues, start with:
+
+1. Check runner compose and config:
+   - `/volume1/docker/gitea-data/gitea-runner/compose.yaml`
+   - `/volume1/docker/gitea-data/gitea-runner/config.yaml`
+2. Confirm runner container is up:
+   - `gitea-runner-runner-1`
+3. Confirm cache endpoint exposure:
+   - `8088:8088`
+4. Confirm artifact cache API responds:
+   - `http://192.168.6.128:8088/_apis/artifactcache/cache?...`
+5. Only after that, inspect `.gitea/workflows/deploy.yml`
+
+## Deployment Notes
+
+- The workflow clears the old remote directory before copying the new one.
+
+## If Another AI Continues Work
+
+Before making changes, it should:
+
+- read this file
+- read `.gitea/workflows/deploy.yml`
+- verify workflow expressions still use `secrets.NAS_SSH_KEY`, `vars.NAS_SSH_PORT`, `vars.NAS_IP`, `vars.NAS_SSH_USER`, and `vars.NAS_BASE_DIR`
+- confirm remote runner config still matches the cache baseline
+- avoid regenerating or persisting admin tokens
+- keep changes minimal and reversible
