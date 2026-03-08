@@ -78,7 +78,7 @@ container:
 
 ## Deploy Workflow Optimization Strategy
 
-- Must use `runs-on: ubuntu-latest` so the runner uses the `ubuntu-latest:docker://node:24-bullseye` label mapping
+- Prefer to use `runs-on: ubuntu-latest` so the runner uses the `ubuntu-latest:docker://node:24-bullseye` label mapping
 - Must not install `openssh-client` unconditionally; first check `command -v ssh`, and only run `apt-get update && apt-get install -y openssh-client` when `ssh` is missing
 - Must keep a dedicated `Ensure SSH Client` step that also runs `ssh -V` for quick runtime verification
 - Must use a hardened SSH setup in workflow steps: `set -euo pipefail`, `install -m 700 -d ~/.ssh`, `umask 077`, then write `~/.ssh/id_rsa` and `~/.ssh/known_hosts` with `chmod 600`
