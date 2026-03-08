@@ -81,6 +81,7 @@ container:
 
 - Secret: `secrets.NAS_SSH_KEY`, `secrets.NAS_KNOWN_HOSTS`
 - Vars: `vars.NAS_IP`, `vars.NAS_SSH_PORT`, `vars.NAS_SSH_USER`, `vars.NAS_BASE_DIR`
+- Mandatory: `.gitea/workflows/*.yml`, deployment docs, and related troubleshooting notes must use exactly this variable set and naming.
 - Keep SSH private key only in `secrets.NAS_SSH_KEY`
 - Keep trusted SSH host fingerprints only in `secrets.NAS_KNOWN_HOSTS`
 
